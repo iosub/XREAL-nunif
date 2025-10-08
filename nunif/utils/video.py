@@ -1213,11 +1213,13 @@ class FrameCallbackPool():
             return None
 
         self.pts_queue.append(frame.pts)
-        frame = to_tensor(frame, device=self.devices[self.round_robin_index % len(self.devices)])
+        # Acumula frames en CPU y transfiere el batch completo a la GPU objetivo
+        target_device = self.devices[self.round_robin_index % len(self.devices)]
+        frame_cpu = to_tensor(frame, device=None)
 
-        self.frame_queue.append(frame)
+        self.frame_queue.append(frame_cpu)
         if len(self.frame_queue) == self.batch_size:
-            batch = torch.stack(self.frame_queue)
+            batch = torch.stack(self.frame_queue).to(target_device, non_blocking=True)
             self.batch_queue.append(batch)
             self.frame_queue.clear()
             self.pts_batch_queue.append(list(self.pts_queue))
@@ -1242,11 +1244,14 @@ class FrameCallbackPool():
 
     def finish(self):
         if self.frame_queue:
-            batch = torch.stack(self.frame_queue)
+            # Usa el mismo dispositivo de round-robin para el último batch parcial
+            target_device = self.devices[self.round_robin_index % len(self.devices)]
+            batch = torch.stack(self.frame_queue).to(target_device, non_blocking=True)
             self.batch_queue.append(batch)
             self.frame_queue.clear()
             self.pts_batch_queue.append(list(self.pts_queue))
             self.pts_queue.clear()
+            self.round_robin_index += 1
 
         frame_remains = []
         while len(self.batch_queue) > 0:
